@@ -1,5 +1,5 @@
 streamlit
-requests
+selenium
 beautifulsoup4
 pandas
-urllib3
+webdriver_manager
