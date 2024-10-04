@@ -1,11 +1,22 @@
 import streamlit as st
-import requests
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import random
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+
+# Setup Chrome options
+def setup_driver():
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+    chrome_options.add_argument(f"user-agent={get_random_user_agent()}")
+    return webdriver.Chrome(options=chrome_options)
 
 # List of user agents to rotate
 user_agents = [
@@ -18,33 +29,18 @@ user_agents = [
 def get_random_user_agent():
     return random.choice(user_agents)
 
-def create_scraper_session():
-    session = requests.Session()
-    retry = Retry(total=5, backoff_factor=0.1, status_forcelist=[500, 502, 503, 504])
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    return session
-
-def extract_restaurant_data(url, session):
+def extract_restaurant_data(url, driver):
     restaurants = []
     
-    headers = {
-        'User-Agent': get_random_user_agent(),
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Referer': 'https://www.google.com/',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'max-age=0',
-    }
-    
     try:
-        response = session.get(url, headers=headers, timeout=30)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, 'html.parser')
+        driver.get(url)
+        time.sleep(5)  # Wait for page to load
         
+        WebDriverWait(driver, 10).until(
+            EC.presence_of_element_located((By.CLASS_NAME, "places-zone"))
+        )
+        
+        soup = BeautifulSoup(driver.page_source, 'html.parser')
         article_title = soup.find('h1', class_='title').text.strip()
         places = soup.find_all('div', class_='component--place-reference')
 
@@ -89,13 +85,17 @@ def main():
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        session = create_scraper_session()
+        driver = setup_driver()
         all_restaurants = []
-        for i, url in enumerate(urls):
-            status_text.text(f"Processing URL {i+1}/{len(urls)}: {url}")
-            all_restaurants.extend(extract_restaurant_data(url, session))
-            progress_bar.progress((i + 1) / len(urls))
-            time.sleep(random.uniform(5, 10))  # Longer random delay between requests
+        
+        try:
+            for i, url in enumerate(urls):
+                status_text.text(f"Processing URL {i+1}/{len(urls)}: {url}")
+                all_restaurants.extend(extract_restaurant_data(url, driver))
+                progress_bar.progress((i + 1) / len(urls))
+                time.sleep(random.uniform(3, 7))  # Random delay between requests
+        finally:
+            driver.quit()
         
         if all_restaurants:
             df = pd.DataFrame(all_restaurants)
