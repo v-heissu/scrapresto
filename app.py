@@ -4,8 +4,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import random
-from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+import io
 
 # List of user agents to rotate
 user_agents = [
@@ -18,27 +17,7 @@ user_agents = [
 def get_random_user_agent():
     return random.choice(user_agents)
 
-def get_proxies():
-    url = 'https://free-proxy-list.net/'
-    response = requests.get(url)
-    parser = BeautifulSoup(response.text, 'html.parser')
-    proxies = []
-    for row in parser.find('tbody').find_all('tr'):
-        if row.find_all('td')[4].text == 'elite proxy':
-            proxy = ':'.join([row.find_all('td')[0].text, row.find_all('td')[1].text])
-            proxies.append(proxy)
-    return proxies
-
-def create_scraper_session(proxy):
-    session = requests.Session()
-    retry = Retry(total=5, backoff_factor=0.1, status_forcelist=[500, 502, 503, 504])
-    adapter = HTTPAdapter(max_retries=retry)
-    session.mount('http://', adapter)
-    session.mount('https://', adapter)
-    session.proxies = {'http': proxy, 'https': proxy}
-    return session
-
-def extract_restaurant_data(url, session):
+def extract_restaurant_data(url):
     restaurants = []
     
     headers = {
@@ -49,11 +28,10 @@ def extract_restaurant_data(url, session):
         'DNT': '1',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
-        'Cache-Control': 'max-age=0',
     }
     
     try:
-        response = session.get(url, headers=headers, timeout=30)
+        response = requests.get(url, headers=headers)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -88,7 +66,6 @@ def extract_restaurant_data(url, session):
 def main():
     st.title("Restaurant Data Scraper")
     
-    # Text area for URLs input
     urls_input = st.text_area("Paste your URLs here (one per line):", height=200)
     
     if st.button("Scrape Data"):
@@ -101,28 +78,37 @@ def main():
         progress_bar = st.progress(0)
         status_text = st.empty()
         
-        proxies = get_proxies()
         all_restaurants = []
         for i, url in enumerate(urls):
             status_text.text(f"Processing URL {i+1}/{len(urls)}: {url}")
-            proxy = random.choice(proxies)
-            session = create_scraper_session(proxy)
-            all_restaurants.extend(extract_restaurant_data(url, session))
+            all_restaurants.extend(extract_restaurant_data(url))
             progress_bar.progress((i + 1) / len(urls))
-            time.sleep(random.uniform(5, 10))  # Longer random delay between requests
+            time.sleep(random.uniform(2, 5))  # Random delay between requests
         
         if all_restaurants:
             df = pd.DataFrame(all_restaurants)
             st.success("Data extraction completed!")
             st.dataframe(df)  # Display the dataframe
             
-            # Provide download link
+            # Provide download links for both CSV and Excel
             csv = df.to_csv(index=False)
             st.download_button(
                 label="Download data as CSV",
                 data=csv,
                 file_name="restaurant_data.csv",
                 mime="text/csv",
+            )
+            
+            # Excel download
+            buffer = io.BytesIO()
+            with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False)
+            excel_data = buffer.getvalue()
+            st.download_button(
+                label="Download data as Excel",
+                data=excel_data,
+                file_name="restaurant_data.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         else:
             st.warning("No data was extracted. Please check the URLs and try again.")
