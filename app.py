@@ -4,6 +4,8 @@ from bs4 import BeautifulSoup
 import pandas as pd
 import time
 import random
+from requests.adapters import HTTPAdapter
+from requests.packages.urllib3.util.retry import Retry
 
 # List of user agents to rotate
 user_agents = [
@@ -16,7 +18,15 @@ user_agents = [
 def get_random_user_agent():
     return random.choice(user_agents)
 
-def extract_restaurant_data(url):
+def create_scraper_session():
+    session = requests.Session()
+    retry = Retry(total=5, backoff_factor=0.1, status_forcelist=[500, 502, 503, 504])
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount('http://', adapter)
+    session.mount('https://', adapter)
+    return session
+
+def extract_restaurant_data(url, session):
     restaurants = []
     
     headers = {
@@ -27,10 +37,11 @@ def extract_restaurant_data(url):
         'DNT': '1',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'max-age=0',
     }
     
     try:
-        response = requests.get(url, headers=headers)
+        response = session.get(url, headers=headers, timeout=30)
         response.raise_for_status()
         soup = BeautifulSoup(response.text, 'html.parser')
         
@@ -78,12 +89,13 @@ def main():
         progress_bar = st.progress(0)
         status_text = st.empty()
         
+        session = create_scraper_session()
         all_restaurants = []
         for i, url in enumerate(urls):
             status_text.text(f"Processing URL {i+1}/{len(urls)}: {url}")
-            all_restaurants.extend(extract_restaurant_data(url))
+            all_restaurants.extend(extract_restaurant_data(url, session))
             progress_bar.progress((i + 1) / len(urls))
-            time.sleep(random.uniform(1, 3))  # Random delay between requests
+            time.sleep(random.uniform(5, 10))  # Longer random delay between requests
         
         if all_restaurants:
             df = pd.DataFrame(all_restaurants)
